@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  serverless-rds-cluster-automation
+
+Globals:
+  Function:
+    Timeout: 10
+    Tracing: Active
+    LoggingConfig:
+      LogFormat: JSON
+  Api:
+    TracingEnabled: true
+
+Resources:
+
+  ##############################
+  # SNS Topic
+  ##############################
+  MySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: RDSClusterProvisioningTopic
+
+  ##############################
+  # SQS Queue
+  ##############################
+  MySQSQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: RDSClusterProvisioningQueue
+
+  ##############################
+  # SQS Queue Policy - Allow SNS to publish
+  ##############################
+  MySQSPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref MySQSQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Allow-SNS-SendMessage
+            Effect: Allow
+            Principal: "*"
+            Action: SQS:SendMessage
+            Resource: !GetAtt MySQSQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref MySNSTopic
+
+  ##############################
+  # SNS Subscription → SQS
+  ##############################
+  MySubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MySNSTopic
+      Protocol: sqs
+      Endpoint: !GetAtt MySQSQueue.Arn
+
+  ##############################
+  # Lambda - API Handler
+  # Exposed by API Gateway to receive requests from devs
+  ##############################
+  ApiHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: RDSApiHandler
+      CodeUri: ../lambda/  
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      Events:
+        ApiRequest:
+          Type: Api
+          Properties:
+            Path: /provision-rds
+            Method: post
+      Policies:
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt MySNSTopic.TopicName
+
+  ##############################
+  # Lambda - Queue Consumer
+  # Listens to SQS and creates GitHub PR
+  ##############################
+  QueueConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: RDSQueueConsumer
+      CodeUri: ../lambda/
+      Handler: handler.sqs_handler
+      Runtime: python3.11
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt MySQSQueue.Arn
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt MySQSQueue.QueueName
+        # תוסיף פה Inline Policy אם אתה ניגש ל-Secrets או ל-GitHub Token
+
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway endpoint for provisioning RDS"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/provision-rds"
+
+  SNSTopicARN:
+    Description: "SNS Topic ARN"
+    Value: !Ref MySNSTopic
+
+  SQSQueueURL:
+    Description: "SQS Queue URL"
+    Value: !Ref MySQSQueue
+
+  ApiHandlerFunctionARN:
+    Description: "API Handler Lambda Function ARN"
+    Value: !GetAtt ApiHandlerFunction.Arn
+
+  QueueConsumerFunctionARN:
+    Description: "Queue Consumer Lambda Function ARN"
+    Value: !GetAtt QueueConsumerFunction.Arn
