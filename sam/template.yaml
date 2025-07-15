@@ -62,7 +62,6 @@ Resources:
 
   ##############################
   # Lambda - API Handler
-  # Exposed by API Gateway to receive requests from devs
   ##############################
   ApiHandlerFunction:
     Type: AWS::Serverless::Function
@@ -80,7 +79,12 @@ Resources:
       Policies:
         - SNSPublishMessagePolicy:
             TopicName: !GetAtt MySNSTopic.TopicName
-
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
   ##############################
   # Lambda - Queue Consumer
   # Listens to SQS and creates GitHub PR
@@ -100,7 +104,22 @@ Resources:
       Policies:
         - SQSPollerPolicy:
             QueueName: !GetAtt MySQSQueue.QueueName
-        # תוסיף פה Inline Policy אם אתה ניגש ל-Secrets או ל-GitHub Token
+
+        # ✅ Best Practice: Allow read access to GitHub Token Secret using !Sub
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
+
+      # ✅ Optional: Pass secret name as env var
+      Environment:
+        Variables:
+          GITHUB_SECRET_ID: "github-token"
+          REPO_NAME: "shimon23/serverless-rds-cluster-automation"
+
+
 
 Outputs:
   ApiEndpoint:
