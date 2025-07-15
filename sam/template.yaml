@@ -70,6 +70,9 @@ Resources:
       CodeUri: ../lambda/  
       Handler: handler.lambda_handler
       Runtime: python3.11
+      Environment:           
+        Variables:
+          SNS_TOPIC_ARN: !Ref MySNSTopic
       Events:
         ApiRequest:
           Type: Api

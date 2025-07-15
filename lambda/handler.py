@@ -6,12 +6,6 @@ from github import Github
 
 # === CONFIG ===
 
-# SNS Topic ARN - from environment variable or fallback
-SNS_TOPIC_ARN = os.getenv(
-    'SNS_TOPIC_ARN',
-    'arn:aws:sns:eu-central-1:569836997621:RDSClusterProvisioningTopic'
-)
-
 def get_github_token():
     secret_id = os.getenv("GITHUB_SECRET_ID", "github-token")
     client = boto3.client("secretsmanager")
@@ -36,6 +30,10 @@ def lambda_handler(event, context):
     Publishes a message to SNS with the requested DB details.
     """
     print("Received event from API Gateway:", json.dumps(event))
+    # SNS Topic ARN 
+    SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
+    if not SNS_TOPIC_ARN:
+        raise ValueError("Missing SNS_TOPIC_ARN environment variable.")
 
     try:
         # Parse body from API Gateway proxy integration
@@ -87,68 +85,63 @@ def lambda_handler(event, context):
 
 def sqs_handler(event, context):
     """
-    Consumes messages from SQS.
-    Creates a GitHub Pull Request with Terraform changes for each message.
+    Consumes messages from SQS. Each message is a wrapped SNS notification.
+    Creates a GitHub PR with Terraform for each DB request.
     """
     print("Received event from SQS:", json.dumps(event))
 
-    # Initialize GitHub connection
     g = Github(GITHUB_TOKEN)
     repo = g.get_repo(REPO_NAME)
 
     for record in event['Records']:
+        # SNS → SQS format: { Type, Message, ... }
         body = json.loads(record['body'])
-        print("SQS Message Body:", body)
+        sns_message = json.loads(body['Message'])
 
-        db_name = body.get("database_name", "exampledb")
-        db_engine = body.get("database_engine", "mysql")
-        environment = body.get("environment", "dev")
-       
+        db_name = sns_message.get("database_name", "exampledb")
+        db_engine = sns_message.get("database_engine", "mysql")
+        environment = sns_message.get("environment", "dev")
+
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
         branch_name = f"create-{db_name}-instance-{timestamp}"
 
-        # Create new branch from main
         source = repo.get_branch("main")
         repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=source.commit.sha)
-        print(f"Created branch: {branch_name}")
 
-        # Generate Terraform content
         tf_content = f"""
-                    resource "aws_db_instance" "{db_name}" {{
-                    identifier              = "{db_name}-instance"
-                    allocated_storage       = 20
-                    engine                  = "{db_engine}"
-                    engine_version          = "8.0"
-                    instance_class          = "db.t3.micro"
-                    db_name                 = "{db_name}"
-                    username                = "admin"
-                    password                = jsondecode(data.aws_secretsmanager_secret_version.db_password.secret_string)["rds-master-password"]
-                    skip_final_snapshot     = true
-                    publicly_accessible     = true
+        resource "aws_db_instance" "{db_name}" {{
+          identifier              = "{db_name}-instance"
+          allocated_storage       = 20
+          engine                  = "{db_engine}"
+          engine_version          = "8.0"
+          instance_class          = "db.t3.micro"
+          db_name                 = "{db_name}"
+          username                = "admin"
+          password                = jsondecode(data.aws_secretsmanager_secret_version.db_password.secret_string)["rds-master-password"]
+          skip_final_snapshot     = true
+          publicly_accessible     = true
 
-                    tags = {{
-                        Name        = "{db_name}-instance"
-                        Environment = "{environment}"
-                    }}
-                    }}
-                    """
+          tags = {{
+            Name        = "{db_name}-instance"
+            Environment = "{environment}"
+          }}
+        }}
+        """
 
-        # Create the Terraform file in the new branch
         repo.create_file(
             path=f"terraform/{db_name}-main.tf",
             message=f"Add Terraform for {db_name}",
             content=tf_content,
             branch=branch_name
         )
-        print(f"Created Terraform file for {db_name}")
 
-        # Create Pull Request
         pr = repo.create_pull(
             title=f"Provision RDS for {db_name}",
             body="Auto-created by Lambda!",
             head=branch_name,
             base="main"
         )
+
         print(f"Pull Request created: {pr.html_url}")
 
     print("Finished processing all SQS messages.")
