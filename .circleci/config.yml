@@ -30,10 +30,8 @@ jobs:
       - run:
           name: Terraform Apply if .tf files changed
           command: |
-            CHANGED_TF_FILES=$(git diff --name-only origin/main...HEAD | grep '^terraform/.*\.tf$' || true)
-            if [ -n "$CHANGED_TF_FILES" ]; then
-              echo "Detected Terraform changes:"
-              echo "$CHANGED_TF_FILES"
+            git fetch origin main
+            if git diff --name-only origin/main...HEAD | grep '\.tf$'; then
               cd terraform
               terraform init
               terraform apply -auto-approve
