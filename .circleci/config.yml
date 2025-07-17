@@ -1,18 +1,11 @@
 version: 2.1
 
-orbs:
-  aws-sam: circleci/aws-sam-serverless@1.0.0
-
 jobs:
   deploy_sam:
     docker:
-      - image: cimg/python:3.11
+      - image: amazon/aws-sam-cli-build-image-python3.11
     steps:
       - checkout
-      - run:
-          name: Install AWS CLI and SAM CLI
-          command: |
-            sudo pip install awscli aws-sam-cli
       - run:
           name: SAM Build
           command: |
@@ -52,7 +45,6 @@ workflows:
           filters:
             branches:
               only: main
-
       - terraform_apply:
           filters:
             branches:
