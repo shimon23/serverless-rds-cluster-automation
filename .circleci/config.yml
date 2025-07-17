@@ -3,7 +3,7 @@ version: 2.1
 jobs:
   deploy_sam:
     docker:
-      - image: amazon/aws-sam-cli-build-image-python3.11
+    - image: public.ecr.aws/sam/build-python3.11
     steps:
       - checkout
       - run:
