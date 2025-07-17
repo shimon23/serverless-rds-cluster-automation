@@ -1,7 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  serverless-rds-cluster-automation
+Description: serverless-rds-cluster-automation
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
 
 Globals:
   Function:
@@ -13,26 +17,16 @@ Globals:
     TracingEnabled: true
 
 Resources:
-
-  ##############################
-  # SNS Topic
-  ##############################
   MySNSTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: RDSClusterProvisioningTopic
+      TopicName: !Sub RDSClusterProvisioningTopic-${Stage}
 
-  ##############################
-  # SQS Queue
-  ##############################
   MySQSQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: RDSClusterProvisioningQueue
+      QueueName: !Sub RDSClusterProvisioningQueue-${Stage}
 
-  ##############################
-  # SQS Queue Policy - Allow SNS to publish
-  ##############################
   MySQSPolicy:
     Type: AWS::SQS::QueuePolicy
     Properties:
@@ -50,9 +44,6 @@ Resources:
               ArnEquals:
                 aws:SourceArn: !Ref MySNSTopic
 
-  ##############################
-  # SNS Subscription → SQS
-  ##############################
   MySubscription:
     Type: AWS::SNS::Subscription
     Properties:
@@ -60,17 +51,14 @@ Resources:
       Protocol: sqs
       Endpoint: !GetAtt MySQSQueue.Arn
 
-  ##############################
-  # Lambda - API Handler
-  ##############################
   ApiHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: RDSApiHandler
-      CodeUri: ../lambda/  
+      FunctionName: !Sub RDSApiHandler-${Stage}
+      CodeUri: ../lambda/
       Handler: handler.lambda_handler
       Runtime: python3.11
-      Environment:           
+      Environment:
         Variables:
           SNS_TOPIC_ARN: !Ref MySNSTopic
           REPO_NAME: "shimon23/serverless-rds-cluster-automation"
@@ -83,7 +71,7 @@ Resources:
             Method: post
       Policies:
         - SNSPublishMessagePolicy:
-            TopicName: !GetAtt MySNSTopic.TopicName
+            TopicName: !Sub RDSClusterProvisioningTopic-${Stage}
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
@@ -91,14 +79,10 @@ Resources:
                 - secretsmanager:GetSecretValue
               Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
 
-  ##############################
-  # Lambda - Queue Consumer
-  # Listens to SQS and creates GitHub PR
-  ##############################
   QueueConsumerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: RDSQueueConsumer
+      FunctionName: !Sub RDSQueueConsumer-${Stage}
       CodeUri: ../lambda/
       Handler: handler.sqs_handler
       Runtime: python3.11
@@ -109,20 +93,17 @@ Resources:
             Queue: !GetAtt MySQSQueue.Arn
       Policies:
         - SQSPollerPolicy:
-            QueueName: !GetAtt MySQSQueue.QueueName
-
+            QueueName: !Sub RDSClusterProvisioningQueue-${Stage}
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
-
       Environment:
         Variables:
           GITHUB_SECRET_ID: "github-token"
           REPO_NAME: "shimon23/serverless-rds-cluster-automation"
-          
 
 Outputs:
   ApiEndpoint:

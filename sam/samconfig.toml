@@ -12,6 +12,7 @@ stack_name = "serverless-rds-cluster-automation"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
+parameter_overrides = "Stage=dev"
 
 [default.package.parameters]
 resolve_s3 = true
