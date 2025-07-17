@@ -19,7 +19,9 @@ jobs:
               --no-confirm-changeset \
               --no-fail-on-empty-changeset \
               --resolve-s3 \
+              --region eu-central-1 \
               --parameter-overrides Stage=dev
+
 
   terraform_apply:
     docker:
