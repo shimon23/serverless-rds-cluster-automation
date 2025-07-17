@@ -2,146 +2,158 @@ import json
 import os
 import boto3
 import datetime
+import logging
 from github import Github
 
-# === CONFIG ===
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# === Configuration ===
 
 def get_github_token():
     secret_id = os.getenv("GITHUB_SECRET_ID", "github-token")
+    if not secret_id:
+        raise EnvironmentError("Missing GITHUB_SECRET_ID environment variable.")
     client = boto3.client("secretsmanager")
     response = client.get_secret_value(SecretId=secret_id)
-    secret = json.loads(response['SecretString'])
-    return secret['token']
+    secret = json.loads(response["SecretString"])
+    return secret["token"]
 
-
-# GitHub Token & Repo Name for creating PRs
+# Environment Variables
 GITHUB_TOKEN = get_github_token()
-REPO_NAME = os.getenv("REPO_NAME", "shimon23/serverless-rds-cluster-automation")
+REPO_NAME = os.getenv("REPO_NAME")
+if not REPO_NAME:
+    raise EnvironmentError("Missing REPO_NAME environment variable.")
 
-# Boto3 SNS client
-sns_client = boto3.client('sns')
+sns_client = boto3.client("sns")
 
+def get_instance_class(env_value):
+    """Maps environment name to appropriate instance class."""
+    env = env_value.strip().lower()
+    mapping = {
+        "dev": "db.t3.micro",
+        "development": "db.t3.micro",
+        "prod": "db.t3.medium",
+        "production": "db.t3.medium"
+    }
+    return mapping.get(env, "db.t3.medium")
 
-# === API Gateway Lambda ===
+def generate_tf_content(db_name, db_engine, instance_class, environment):
+    """Returns Terraform code as a string."""
+    return f"""
+    resource "aws_db_instance" "{db_name}" {{
+      identifier              = "{db_name}-instance"
+      allocated_storage       = 20
+      engine                  = "{db_engine}"
+      engine_version          = "8.0"
+      instance_class          = "{instance_class}"
+      db_name                 = "{db_name}"
+      username                = "admin"
+      password                = jsondecode(data.aws_secretsmanager_secret_version.db_password.secret_string)["rds-master-password"]
+      skip_final_snapshot     = true
+      publicly_accessible     = true
+
+      tags = {{
+        Name        = "{db_name}-instance"
+        Environment = "{environment}"
+      }}
+    }}
+    """.strip()
+
+def create_branch(repo, branch_name, base_branch="main"):
+    source = repo.get_branch(base_branch)
+    repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=source.commit.sha)
+
+# === Lambda Handlers ===
 
 def lambda_handler(event, context):
-    """
-    Handles requests from API Gateway.
-    Publishes a message to SNS with the requested DB details.
-    """
-    print("Received event from API Gateway:", json.dumps(event))
-    # SNS Topic ARN 
-    SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
-    if not SNS_TOPIC_ARN:
-        raise ValueError("Missing SNS_TOPIC_ARN environment variable.")
+    """Handles incoming API requests."""
+    logger.info("Received event from API Gateway: %s", json.dumps(event))
+    sns_topic_arn = os.getenv("SNS_TOPIC_ARN")
+    if not sns_topic_arn:
+        raise EnvironmentError("Missing SNS_TOPIC_ARN environment variable.")
 
     try:
-        # Parse body from API Gateway proxy integration
-        body = json.loads(event['body'])
+        body = json.loads(event.get("body", "{}"))
+        database_name = body.get("database_name")
+        database_engine = body.get("database_engine")
+        environment = body.get("environment")
 
-        # Validate required parameters
-        database_name = body.get('database_name')
-        database_engine = body.get('database_engine')
-        environment = body.get('environment')
-
-        if not database_name or not database_engine or not environment:
+        if not all([database_name, database_engine, environment]):
             return {
                 "statusCode": 400,
                 "body": json.dumps({"error": "Missing required parameters"})
             }
 
-        # Build the SNS message payload
         message = {
             "database_name": database_name,
             "database_engine": database_engine,
             "environment": environment
         }
 
-        # Publish message to SNS Topic
         response = sns_client.publish(
-            TopicArn=SNS_TOPIC_ARN,
+            TopicArn=sns_topic_arn,
             Message=json.dumps(message)
         )
 
-        print("Published to SNS. Message ID:", response['MessageId'])
+        logger.info("Published to SNS. Message ID: %s", response["MessageId"])
 
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "message": "Request accepted",
-                "sns_message_id": response['MessageId']
+                "sns_message_id": response["MessageId"]
             })
         }
 
     except Exception as e:
-        print("Error:", str(e))
+        logger.exception("Unhandled exception in lambda_handler")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": str(e)})
         }
 
-
-# === SQS Queue Consumer Lambda ===
-
 def sqs_handler(event, context):
-    """
-    Consumes messages from SQS. Each message is a wrapped SNS notification.
-    Creates a GitHub PR with Terraform for each DB request.
-    """
-    print("Received event from SQS:", json.dumps(event))
+    """Consumes messages from SQS and creates GitHub PR with Terraform."""
+    logger.info("Received event from SQS: %s", json.dumps(event))
 
     g = Github(GITHUB_TOKEN)
     repo = g.get_repo(REPO_NAME)
 
-    for record in event['Records']:
-        # SNS → SQS format: { Type, Message, ... }
-        body = json.loads(record['body'])
-        sns_message = json.loads(body['Message'])
+    for record in event["Records"]:
+        try:
+            body = json.loads(record["body"])
+            sns_message = json.loads(body.get("Message", "{}"))
 
-        db_name = sns_message.get("database_name", "exampledb")
-        db_engine = sns_message.get("database_engine", "mysql")
-        environment = sns_message.get("environment", "dev")
+            db_name = sns_message.get("database_name", "exampledb")
+            db_engine = sns_message.get("database_engine", "mysql")
+            environment = sns_message.get("environment", "dev")
+            instance_class = get_instance_class(environment)
 
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        branch_name = f"create-{db_name}-instance-{timestamp}"
+            timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            branch_name = f"create-{db_name}-instance-{timestamp}"
 
-        source = repo.get_branch("main")
-        repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=source.commit.sha)
+            create_branch(repo, branch_name)
 
-        tf_content = f"""
-        resource "aws_db_instance" "{db_name}" {{
-          identifier              = "{db_name}-instance"
-          allocated_storage       = 20
-          engine                  = "{db_engine}"
-          engine_version          = "8.0"
-          instance_class          = "db.t3.micro"
-          db_name                 = "{db_name}"
-          username                = "admin"
-          password                = jsondecode(data.aws_secretsmanager_secret_version.db_password.secret_string)["rds-master-password"]
-          skip_final_snapshot     = true
-          publicly_accessible     = true
+            tf_content = generate_tf_content(db_name, db_engine, instance_class, environment)
 
-          tags = {{
-            Name        = "{db_name}-instance"
-            Environment = "{environment}"
-          }}
-        }}
-        """
+            repo.create_file(
+                path=f"terraform/{db_name}-main.tf",
+                message=f"Add Terraform for {db_name}",
+                content=tf_content,
+                branch=branch_name
+            )
 
-        repo.create_file(
-            path=f"terraform/{db_name}-main.tf",
-            message=f"Add Terraform for {db_name}",
-            content=tf_content,
-            branch=branch_name
-        )
+            pr = repo.create_pull(
+                title=f"Provision RDS for {db_name}",
+                body="Auto-created by Lambda!",
+                head=branch_name,
+                base="main"
+            )
 
-        pr = repo.create_pull(
-            title=f"Provision RDS for {db_name}",
-            body="Auto-created by Lambda!",
-            head=branch_name,
-            base="main"
-        )
+            logger.info("Pull Request created: %s", pr.html_url)
 
-        print(f"Pull Request created: {pr.html_url}")
+        except Exception as e:
+            logger.exception("Failed to process message: %s", record)
 
-    print("Finished processing all SQS messages.")
+    logger.info("Finished processing all SQS messages.")

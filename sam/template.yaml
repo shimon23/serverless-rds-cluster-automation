@@ -73,6 +73,8 @@ Resources:
       Environment:           
         Variables:
           SNS_TOPIC_ARN: !Ref MySNSTopic
+          REPO_NAME: "shimon23/serverless-rds-cluster-automation"
+          GITHUB_SECRET_ID: "github-token"
       Events:
         ApiRequest:
           Type: Api
@@ -88,6 +90,7 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
+
   ##############################
   # Lambda - Queue Consumer
   # Listens to SQS and creates GitHub PR
@@ -108,7 +111,6 @@ Resources:
         - SQSPollerPolicy:
             QueueName: !GetAtt MySQSQueue.QueueName
 
-        # ✅ Best Practice: Allow read access to GitHub Token Secret using !Sub
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
@@ -116,13 +118,11 @@ Resources:
                 - secretsmanager:GetSecretValue
               Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
 
-      # ✅ Optional: Pass secret name as env var
       Environment:
         Variables:
           GITHUB_SECRET_ID: "github-token"
           REPO_NAME: "shimon23/serverless-rds-cluster-automation"
-
-
+          
 
 Outputs:
   ApiEndpoint:
