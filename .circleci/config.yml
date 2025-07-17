@@ -1,10 +1,5 @@
 version: 2.1
 
-parameters:
-  stage:
-    type: string
-    default: dev
-
 jobs:
   deploy_sam:
     docker:
@@ -20,7 +15,11 @@ jobs:
           name: SAM Deploy
           command: |
             cd sam
-            sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --resolve-s3 --parameter-overrides Stage=<< pipeline.parameters.stage >>
+            sam deploy \
+              --no-confirm-changeset \
+              --no-fail-on-empty-changeset \
+              --resolve-s3 \
+              --parameter-overrides Stage=dev
 
   terraform_apply:
     docker:
@@ -43,7 +42,6 @@ workflows:
   deploy:
     jobs:
       - deploy_sam:
-          stage: dev
           filters:
             branches:
               only: main
