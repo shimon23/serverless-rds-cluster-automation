@@ -51,6 +51,54 @@ Resources:
       Protocol: sqs
       Endpoint: !GetAtt MySQSQueue.Arn
 
+  ApiHandlerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: InlineApiPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+
+  QueueConsumerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: InlineQueuePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+
   ApiHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -58,6 +106,7 @@ Resources:
       CodeUri: ../lambda/
       Handler: handler.lambda_handler
       Runtime: python3.11
+      Role: !GetAtt ApiHandlerFunctionRole.Arn
       Environment:
         Variables:
           SNS_TOPIC_ARN: !Ref MySNSTopic
@@ -69,15 +118,6 @@ Resources:
           Properties:
             Path: /provision-rds
             Method: post
-      Policies:
-        - SNSPublishMessagePolicy:
-            TopicName: !Sub RDSClusterProvisioningTopic-${Stage}
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
 
   QueueConsumerFunction:
     Type: AWS::Serverless::Function
@@ -86,20 +126,12 @@ Resources:
       CodeUri: ../lambda/
       Handler: handler.sqs_handler
       Runtime: python3.11
+      Role: !GetAtt QueueConsumerFunctionRole.Arn
       Events:
         SQSEvent:
           Type: SQS
           Properties:
             Queue: !GetAtt MySQSQueue.Arn
-      Policies:
-        - SQSPollerPolicy:
-            QueueName: !Sub RDSClusterProvisioningQueue-${Stage}
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-token-*
       Environment:
         Variables:
           GITHUB_SECRET_ID: "github-token"
