@@ -1,0 +1,59 @@
+version: 2.1
+
+orbs:
+  aws-sam: circleci/aws-sam-serverless@1.0.0
+
+jobs:
+  deploy_sam:
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - run:
+          name: Install AWS CLI and SAM CLI
+          command: |
+            sudo pip install awscli aws-sam-cli
+      - run:
+          name: SAM Build
+          command: |
+            cd sam
+            sam build
+      - run:
+          name: SAM Deploy
+          command: |
+            cd sam
+            sam deploy --no-confirm-changeset --no-fail-on-empty-changeset \
+              --stack-name rds-provisioning-stack \
+              --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+              --region eu-central-1 \
+              --parameter-overrides Stage=prod
+
+  terraform_apply:
+    docker:
+      - image: hashicorp/terraform:light
+    steps:
+      - checkout
+      - run:
+          name: Terraform Apply if .tf files changed
+          command: |
+            if git diff --name-only HEAD~1 HEAD | grep '\.tf$'; then
+              cd terraform
+              terraform init
+              terraform apply -auto-approve
+            else
+              echo "No Terraform changes detected. Skipping apply."
+            fi
+
+workflows:
+  version: 2
+  deploy:
+    jobs:
+      - deploy_sam:
+          filters:
+            branches:
+              only: main
+
+      - terraform_apply:
+          filters:
+            branches:
+              only: main
