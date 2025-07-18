@@ -28,13 +28,12 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Terraform Init & Apply 
+          name: Terraform Init & Apply
           command: |
-            name: Terraform Init & Apply
-            command: |
-              cd terraform
-              terraform init -reconfigure
-              terraform apply -auto-approve
+            cd terraform
+            terraform init -reconfigure
+            terraform apply -auto-approve
+
 
 
 workflows:
