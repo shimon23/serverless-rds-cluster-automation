@@ -28,16 +28,13 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Terraform Init & Apply (only if .tf files added)
+          name: Terraform Init & Apply 
           command: |
-            CHANGED=$(git log -1 --name-only --pretty=oneline | grep '^terraform/.*\.tf$' || true)
-            if [ ! -z "$CHANGED" ]; then
+            name: Terraform Init & Apply
+            command: |
               cd terraform
               terraform init -reconfigure
               terraform apply -auto-approve
-            else
-              echo "No new Terraform files detected under terraform/. Skipping apply."
-            fi
 
 
 workflows:
