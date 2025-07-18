@@ -2,6 +2,12 @@
 # === Terraform Settings ===
 ##########################################
 terraform {
+  backend "s3" {
+    bucket         = "terraform-state-shimo-automation-2025"
+    key            = "terraform.tfstate"
+    region         = "eu-central-1"
+    encrypt        = true
+  }
   required_providers {
     aws = {
       source  = "hashicorp/aws"
