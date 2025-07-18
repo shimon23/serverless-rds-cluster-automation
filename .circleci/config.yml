@@ -28,16 +28,20 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Terraform Apply if .tf files changed
+          name: Terraform Apply if new .tf files added
           command: |
             git fetch origin main
-            if git diff --name-only origin/main...HEAD | grep '\.tf$'; then
+            NEW_TF_FILES=$(git diff --name-status origin/main...HEAD | grep '^A' | grep '\.tf$' || true)
+            if [ -n "$NEW_TF_FILES" ]; then
+              echo "Detected new Terraform files:"
+              echo "$NEW_TF_FILES"
               cd terraform
               terraform init
               terraform apply -auto-approve
             else
-              echo "No Terraform changes detected. Skipping apply."
+              echo "No new Terraform files added. Skipping apply."
             fi
+
 
 workflows:
   version: 2

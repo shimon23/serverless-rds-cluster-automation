@@ -38,17 +38,27 @@ def get_instance_class(env_value):
     }
     return mapping.get(env, "db.t3.medium")
 
-def generate_tf_content(db_name, db_engine, instance_class, environment):
+
+def get_engine_version(db_engine):
+    db_engine = db_engine.strip().lower()
+    if  db_engine == "mysql":
+        return "8.0"
+    elif db_engine == "postgres":
+        return "15.4"
+    else:
+        raise ValueError(f"Unsupported engine: {db_engine}")
+
+def generate_tf_content(db_name, db_engine, engine_version, instance_class, environment):
     """Returns Terraform code as a string."""
     return f"""
     resource "aws_db_instance" "{db_name}" {{
       identifier              = "{db_name}-instance"
       allocated_storage       = 20
       engine                  = "{db_engine}"
-      engine_version          = "8.0"
+      engine_version          = "{engine_version}"
       instance_class          = "{instance_class}"
       db_name                 = "{db_name}"
-      username                = "admin"
+      username                = "rdsuser"
       password                = jsondecode(data.aws_secretsmanager_secret_version.db_password.secret_string)["rds-master-password"]
       skip_final_snapshot     = true
       publicly_accessible     = true
@@ -113,6 +123,8 @@ def lambda_handler(event, context):
             "body": json.dumps({"error": str(e)})
         }
 
+
+
 def sqs_handler(event, context):
     """Consumes messages from SQS and creates GitHub PR with Terraform."""
     logger.info("Received event from SQS: %s", json.dumps(event))
@@ -134,8 +146,9 @@ def sqs_handler(event, context):
             branch_name = f"create-{db_name}-instance-{timestamp}"
 
             create_branch(repo, branch_name)
+            engine_version = get_engine_version(db_engine)
 
-            tf_content = generate_tf_content(db_name, db_engine, instance_class, environment)
+            tf_content = generate_tf_content(db_name, db_engine,engine_version, instance_class, environment)
 
             repo.create_file(
                 path=f"terraform/{db_name}-main.tf",
