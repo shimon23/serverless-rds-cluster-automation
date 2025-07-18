@@ -30,12 +30,13 @@ jobs:
       - run:
           name: Terraform Init & Apply (only if .tf files added)
           command: |
-            cd terraform
-            terraform init
-            if git diff-tree --no-commit-id --name-only -r HEAD | grep '\.tf$'; then
+            CHANGED=$(git log -1 --name-only --pretty=oneline | grep '^terraform/.*\.tf$' || true)
+            if [ ! -z "$CHANGED" ]; then
+              cd terraform
+              terraform init -reconfigure
               terraform apply -auto-approve
             else
-              echo "No Terraform changes detected. Skipping apply."
+              echo "No new Terraform files detected under terraform/. Skipping apply."
             fi
 
 
