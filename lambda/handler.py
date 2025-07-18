@@ -44,7 +44,7 @@ def get_engine_version(db_engine):
     if  db_engine == "mysql":
         return "8.0"
     elif db_engine == "postgres":
-        return "15.4"
+        return "15.10"
     else:
         raise ValueError(f"Unsupported engine: {db_engine}")
 
